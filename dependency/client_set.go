@@ -12,6 +12,7 @@ import (
 
 	consulapi "github.com/hashicorp/consul/api"
 	rootcerts "github.com/hashicorp/go-rootcerts"
+	nomadapi "github.com/hashicorp/nomad/api"
 	vaultapi "github.com/hashicorp/vault/api"
 )
 
@@ -22,6 +23,7 @@ type ClientSet struct {
 
 	vault  *vaultClient
 	consul *consulClient
+	nomad  *nomadClient
 }
 
 // consulClient is a wrapper around a real Consul API client.
@@ -34,6 +36,13 @@ type consulClient struct {
 type vaultClient struct {
 	client     *vaultapi.Client
 	httpClient *http.Client
+}
+
+// nomadClient is a wrapper around a real Nomad API client.
+type nomadClient struct {
+	client     *nomadapi.Client
+	httpClient *http.Client
+	namespace  string
 }
 
 // TransportDialer is an interface that allows passing a custom dialer function
@@ -94,6 +103,16 @@ type CreateVaultClientInput struct {
 	TransportMaxIdleConns        int
 	TransportMaxIdleConnsPerHost int
 	TransportTLSHandshakeTimeout time.Duration
+}
+
+// CreateNomadClientInput is used as input to the CreateNomadClient function.
+type CreateNomadClientInput struct {
+	Address      string
+	Namespace    string
+	Token        string
+	AuthUsername string
+	AuthPassword string
+	HttpClient   *http.Client
 }
 
 // NewClientSet creates a new client set that is ready to accept clients.
@@ -338,6 +357,52 @@ func (c *ClientSet) CreateVaultClient(i *CreateVaultClientInput) error {
 	return nil
 }
 
+// CreateNomadClient creates a new Nomad API client from the given input.
+func (c *ClientSet) CreateNomadClient(i *CreateNomadClientInput) error {
+	conf := nomadapi.DefaultConfig()
+
+	if i.Address != "" {
+		conf.Address = i.Address
+	}
+
+	if i.Namespace != "" {
+		conf.Namespace = i.Namespace
+	}
+
+	if i.Token != "" {
+		conf.SecretID = i.Token
+	}
+
+	if i.AuthUsername != "" || i.AuthPassword != "" {
+		conf.HttpAuth = &nomadapi.HttpBasicAuth{
+			Username: i.AuthUsername,
+			Password: i.AuthPassword,
+		}
+	}
+
+	// Setup the http client
+	if i.HttpClient != nil {
+		conf.HttpClient = i.HttpClient
+	}
+
+	// Create the API client
+	client, err := nomadapi.NewClient(conf)
+	if err != nil {
+		return fmt.Errorf("client set: nomad: %w", err)
+	}
+
+	// Save the data on ourselves
+	c.Lock()
+	c.nomad = &nomadClient{
+		client:     client,
+		httpClient: i.HttpClient,
+		namespace:  i.Namespace,
+	}
+	c.Unlock()
+
+	return nil
+}
+
 // Consul returns the Consul client for this set.
 func (c *ClientSet) Consul() *consulapi.Client {
 	c.RLock()
@@ -352,6 +417,13 @@ func (c *ClientSet) Vault() *vaultapi.Client {
 	return c.vault.client
 }
 
+// Nomad returns the Nomad client for this set.
+func (c *ClientSet) Nomad() *nomadapi.Client {
+	c.RLock()
+	defer c.RUnlock()
+	return c.nomad.client
+}
+
 // Stop closes all idle connections for any attached clients.
 func (c *ClientSet) Stop() {
 	c.Lock()
@@ -363,5 +435,11 @@ func (c *ClientSet) Stop() {
 
 	if c.vault != nil {
 		c.vault.httpClient.Transport.(*http.Transport).CloseIdleConnections()
+	}
+
+	if c.nomad != nil {
+		if t, ok := c.nomad.httpClient.Transport.(*http.Transport); ok {
+			t.CloseIdleConnections()
+		}
 	}
 }
