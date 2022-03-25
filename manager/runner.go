@@ -1355,6 +1355,17 @@ func newClientSet(c *config.Config) (*dep.ClientSet, error) {
 		return nil, fmt.Errorf("runner: %s", err)
 	}
 
+	if err := clients.CreateNomadClient(&dep.CreateNomadClientInput{
+		Address:      config.StringVal(c.Nomad.Address),
+		Namespace:    config.StringVal(c.Nomad.Namespace),
+		Token:        config.StringVal(c.Nomad.Token),
+		AuthUsername: config.StringVal(c.Nomad.AuthUsername),
+		AuthPassword: config.StringVal(c.Nomad.AuthPassword),
+		HttpClient:   c.Nomad.HttpClient,
+	}); err != nil {
+		return nil, fmt.Errorf("runner: %s", err)
+	}
+
 	return clients, nil
 }
 

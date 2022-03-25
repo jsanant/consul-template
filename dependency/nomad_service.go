@@ -6,14 +6,17 @@ import (
 	"log"
 	"net/url"
 	"regexp"
+	"sort"
 
 	"github.com/pkg/errors"
 )
 
 var (
-	// Ensure implements
+	// Ensure NomadServiceQuery meets the Dependency interface.
 	_ Dependency = (*NomadServiceQuery)(nil)
 
+	// NomadServiceQueryRe is the regex that is used to understand a service
+	// specific Nomad query.
 	NomadServiceQueryRe = regexp.MustCompile(`\A` + tagRe + serviceNameRe + regionRe + `\z`)
 )
 
@@ -21,7 +24,8 @@ func init() {
 	gob.Register([]*NomadService{})
 }
 
-// NomadService is a service entry in Nomad.
+// NomadService is a fully hydrated service registration response from the
+// mirroring the Nomad API response object.
 type NomadService struct {
 	ID         string
 	Name       string
@@ -44,6 +48,8 @@ type NomadServiceQuery struct {
 	tag    string
 }
 
+// NewNomadServiceQuery parses a string into a NomadServiceQuery which is
+// used to list services registered within Nomad which match a particular name.
 func NewNomadServiceQuery(s string) (*NomadServiceQuery, error) {
 	if !NomadServiceQueryRe.MatchString(s) {
 		return nil, fmt.Errorf("nomad.service: invalid format: %q", s)
@@ -83,7 +89,7 @@ func (d *NomadServiceQuery) Fetch(client *ClientSet, opts *QueryOptions) (interf
 	log.Printf("[TRACE] %s: GET %s", d, u)
 
 	//TODO: missing tag support
-	entries, qm, err := client.Nomad().ServiceRegistrations().Get(d.name, opts.ToNomadOpts())
+	entries, qm, err := client.Nomad().Services().Get(d.name, opts.ToNomadOpts())
 	if err != nil {
 		return nil, nil, errors.Wrap(err, d.String())
 	}
@@ -99,11 +105,13 @@ func (d *NomadServiceQuery) Fetch(client *ClientSet, opts *QueryOptions) (interf
 			Address:    s.Address,
 			Port:       s.Port,
 			Datacenter: s.Datacenter,
-			Tags:       ServiceTags(deepCopyAndSortTags(s.Tags)),
+			Tags:       deepCopyAndSortTags(s.Tags),
 			JobID:      s.JobID,
 			AllocID:    s.AllocID,
 		}
 	}
+
+	sort.Stable(NomadServiceByName(services))
 
 	rm := &ResponseMetadata{
 		LastIndex: qm.LastIndex,
@@ -127,10 +135,24 @@ func (d *NomadServiceQuery) String() string {
 	return fmt.Sprintf("nomad.service(%s)", name)
 }
 
+// Stop halts the dependency's fetch function.
 func (d *NomadServiceQuery) Stop() {
 	close(d.stopCh)
 }
 
+// Type returns the type of this dependency.
 func (d *NomadServiceQuery) Type() Type {
 	return TypeNomad
+}
+
+// NomadServiceByName is a sortable slice of NomadService structs.
+type NomadServiceByName []*NomadService
+
+func (s NomadServiceByName) Len() int      { return len(s) }
+func (s NomadServiceByName) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
+func (s NomadServiceByName) Less(i, j int) bool {
+	if s[i].Name <= s[j].Name {
+		return true
+	}
+	return false
 }

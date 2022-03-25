@@ -13,10 +13,11 @@ import (
 )
 
 var (
-	// Ensure implements
+	// Ensure NomadServiceQuery meets the Dependency interface.
 	_ Dependency = (*NomadServicesQuery)(nil)
 
-	// NomadServicesQueryRe is the regular expression to use for CatalogNodesQuery.
+	// NomadServicesQueryRe is the regex that is used to understand a service
+	// listing Nomad query.
 	NomadServicesQueryRe = regexp.MustCompile(`\A` + regionRe + `\z`)
 )
 
@@ -50,6 +51,8 @@ type NomadServicesQuery struct {
 	region string
 }
 
+// NewNomadServicesQuery parses a string into a NomadServicesQuery which is
+// used to list services registered within Nomad.
 func NewNomadServicesQuery(s string) (*NomadServicesQuery, error) {
 	if !NomadServicesQueryRe.MatchString(s) {
 		return nil, fmt.Errorf("nomad.services: invalid format: %q", s)
@@ -85,7 +88,7 @@ func (d *NomadServicesQuery) Fetch(clients *ClientSet, opts *QueryOptions) (inte
 		RawQuery: opts.String(),
 	})
 
-	namespaces, qm, err := clients.Nomad().ServiceRegistrations().List(opts.ToNomadOpts())
+	namespaces, qm, err := clients.Nomad().Services().List(opts.ToNomadOpts())
 	if err != nil {
 		return nil, nil, errors.Wrap(err, d.String())
 	}
@@ -117,6 +120,7 @@ func (d *NomadServicesQuery) Fetch(clients *ClientSet, opts *QueryOptions) (inte
 	return services, rm, nil
 }
 
+// String returns the human-friendly version of this dependency.
 func (d *NomadServicesQuery) String() string {
 	if d.region != "" {
 		return fmt.Sprintf("nomad.services(@%s)", d.region)
@@ -124,10 +128,12 @@ func (d *NomadServicesQuery) String() string {
 	return "nomad.services"
 }
 
+// Stop halts the dependency's fetch function.
 func (d *NomadServicesQuery) Stop() {
 	close(d.stopCh)
 }
 
+// Type returns the type of this dependency.
 func (d *NomadServicesQuery) Type() Type {
 	return TypeNomad
 }
